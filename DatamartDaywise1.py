@@ -7,6 +7,7 @@ import warnings
 from streamlit_folium import st_folium
 from dateutil import parser
 
+
 warnings.filterwarnings("ignore")
 
 # Function to process occupancy assumptions
@@ -15,29 +16,47 @@ def process_occupancy_assump(file, sheets):
     occ_columns = []
 
     for sheet in sheets:
-        df = pd.read_excel(file, sheet_name=sheet, header=None)
+        try:
+            df = pd.read_excel(file, sheet_name=sheet, header=None)
+        except ValueError as e:
+            st.error(f"❌ Sheet '{sheet}' not found in the uploaded Excel file. Please check the sheet names and try again.")
+            st.stop()
+        except Exception as e:
+            st.error(f"⚠️ Unexpected error while reading sheet '{sheet}': {e}")
+            st.stop()
+        if df.empty:
+            st.warning(f"⚠️ Sheet '{sheet}' is empty. Skipping this sheet.")
+            continue
+
+        # Process the DataFrame
         df = df.iloc[3:, 3:].reset_index(drop=True)
         df = df.T.reset_index(drop=True)
         
         df.columns = df.iloc[0].astype(str) + " " + df.iloc[1].astype(str) + " " + df.iloc[2].astype(str)
         df.columns = df.columns.str.replace("nan", "").str.strip()
         df = df[3:].reset_index(drop=True)
-        df["Week Of:"] = pd.to_datetime(df["Week Of:"], errors="coerce").dt.date
+        df["Week Of:"] = pd.to_datetime(df["Week Of:"],format='mixed', dayfirst=True,errors="coerce")
 
         occ_columns = [col for col in df.columns if "OCC Assumptions" in col]
         occ_df = df[["Week Of:"] + occ_columns]
         occ_assumptions_dataframe = pd.concat([occ_assumptions_dataframe, occ_df], axis=0)
-
+        
     return occ_assumptions_dataframe, occ_columns
 
 # Function to expand weekly occupancy to daily long format
 def expand_weekly_occ_to_daily_long(df_weekly):
-    df_weekly['Week Of:'] = pd.to_datetime(df_weekly['Week Of:'])
+    df_weekly['Week Of:'] = pd.to_datetime(df_weekly['Week Of:'],format='mixed', dayfirst=True, errors='coerce')
+    df_weekly = df_weekly.dropna(subset=['Week Of:'])  # Drop rows where date is not parsable
+
     df_daily = df_weekly.loc[df_weekly.index.repeat(7)].copy()
     df_daily['Day Offset'] = df_daily.groupby('Week Of:').cumcount()
     df_daily['startDate per day'] = df_daily['Week Of:'] + pd.to_timedelta(df_daily['Day Offset'], unit='D')
+    df_daily['startDate per day'] = pd.to_datetime(df_daily['startDate per day'],format='mixed', dayfirst=True,errors='coerce').dt.normalize()
+
     df_daily = df_daily.drop(columns=['Week Of:', 'Day Offset'])
+
     df_long = df_daily.melt(id_vars='startDate per day', var_name='Level', value_name='OCC Assumption')
+    df_long['startDate per day'] = pd.to_datetime(df_long['startDate per day'],format='mixed', dayfirst=True,errors='coerce').dt.normalize()
     return df_long
 
 # Function to extract level from a string
@@ -65,7 +84,7 @@ def extract_level_and_category(input_string):
 
 # Function to convert DataFrame for calls
 def convert_df_calls(df):
-    df['startDate per day'] = pd.to_datetime(df['startDate per day'], errors='coerce')
+    df['startDate per day'] = pd.to_datetime(df['startDate per day'],format='mixed', dayfirst=True, errors='coerce')
     raw_float_cols = ['ABNs', 'Calls', 'Q2', 'Loaded AHT', 'ABN %']
     percent_cols = ['Met', 'Missed']
     for col in raw_float_cols:
@@ -79,8 +98,10 @@ def convert_df_calls(df):
 # Function to convert DataFrame for FTE
 def convert_df_fte(df, lang):
     
-    df['startDate per day'] = pd.to_datetime(df['startDate per day'], format='%d-%m-%Y').dt.strftime('%Y-%m-%d')
-#     df['startDate per day'] = pd.to_datetime(df['startDate per day'], errors='coerce')
+    # Let pandas infer the format
+    df['startDate per day'] = pd.to_datetime(df['startDate per day'],format='mixed', dayfirst=True, errors='coerce')
+    df['startDate per day'] = df['startDate per day'].dt.strftime('%Y-%m-%d')
+    
     df['Level'] = df['Agent Type'].astype(str).str[:2]
     df.rename(columns={'Product': 'Req Media', 'Location': 'USD', 'Level': 'Level_ix'}, inplace=True)
     df['Weekly FTEs'] = df['Weekly FTEs'].astype(str).str.replace(',', '', regex=False)
@@ -91,7 +112,7 @@ def convert_df_fte(df, lang):
 
 # Function to convert DataFrame for occupancy
 def convert_df_occ(df):
-    df['startDate per day'] = pd.to_datetime(df['startDate per day'], errors='coerce')
+    df['startDate per day'] = pd.to_datetime(df['startDate per day'],format='mixed', dayfirst=True, errors='coerce')
     df.rename(columns={'Req. Media': 'Req Media'}, inplace=True)
     df['OCC'] = df['OCC'].astype(str).str.replace('%', '', regex=False).str.replace(',', '', regex=False)
     df['OCC'] = pd.to_numeric(df['OCC'], errors='coerce')
@@ -196,9 +217,16 @@ def run_daywise_tool():
     planner_type = st.multiselect("Select sheets to process", ["1. Weekly Planner OPI USD", "2. Weekly Planner OPI Global", 
                                                             "3. Weekly Planner VRI", "1. Weekly Planner OPI", 
                                                             "2. Weekly Planner VRI", "3. UKD"])
-
+    try:
+        if not planner_type:
+            st.warning("Please select at least one sheet to process.")
+            return
+    except Exception as e:
+        st.error(f"An error occurred while processing the selected sheets: {e}")
+        return
     if st.button('Process Files'):
         if uploaded_wp_file:
+            
             sheets = planner_type
             occ_assumptions_dataframe, occ_columns = process_occupancy_assump(uploaded_wp_file, sheets)
                 
@@ -232,7 +260,7 @@ def run_daywise_tool():
             df_fte_lang = df_fte_lang.fillna(0)
             
             # Ensure clean 'Product' column
-            df_fte_lang['startDate per day'] = pd.to_datetime(df_fte_lang['startDate per day'])
+            df_fte_lang['startDate per day'] = pd.to_datetime(df_fte_lang['startDate per day'],format='mixed', dayfirst=True,errors='coerce')
             
             df_fte_pivoted = df_fte_lang.pivot_table(
                 index=['startDate per day', 'USD','Language','Level_ix'],
@@ -267,7 +295,7 @@ def run_daywise_tool():
             df_opi_vri_fte = df_fte_grouped[['startDate per day', 'Language','USD','Level', 'Total OPI FTEs', 'Total VRI FTEs']]
 
             # Ensure date format consistency in df_calls
-            df_calls['startDate per day'] = pd.to_datetime(df_calls['startDate per day'], errors='coerce')       
+            df_calls['startDate per day'] = pd.to_datetime(df_calls['startDate per day'],format='mixed', dayfirst=True, errors='coerce')       
             
 
             # Merge only OPI/VRI totals into df_calls using common keys
@@ -275,7 +303,7 @@ def run_daywise_tool():
                 df_calls,
                 df_opi_vri_fte,
                 on=['startDate per day','USD', 'Language', 'Level'],
-                how='inner'
+                how='left'
             )
 
             final_fte_occ_assump = df_calls_with_fte.merge(df_occ_assump, on =['startDate per day', 'Level', 'USD'], how='inner')
@@ -284,7 +312,7 @@ def run_daywise_tool():
             final_fte_occ_assump_occ_rate = final_fte_occ_assump.merge(
                 df_occ,
                 on=['startDate per day','Language','USD', 'Level', 'Req Media'],
-                how='left'
+                how='inner'
             )
 
             final_data = final_fte_occ_assump_occ_rate.copy()
@@ -306,7 +334,7 @@ def run_daywise_tool():
             planner_type_txt=' '.join(planner_type)
             type_data=extract_after_weekly_planner(planner_type_txt)
             
-            st.write(type_data)
+            
             
             
             if 'OPI' in type_data.upper():
@@ -325,3 +353,6 @@ def run_daywise_tool():
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
             st.success("File processed successfully!")  
+
+# if __name__ == "__main__":
+#     run_daywise_tool()
