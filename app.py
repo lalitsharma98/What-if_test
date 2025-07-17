@@ -1,8 +1,9 @@
 import streamlit as st
 from data_extractor import run_data_extractor
-from fte_analysis import run_fte_analysis
+# from fte_analysis import run_fte_analysis
+from staffing_Req_Ver3 import run_fte_analysis
 from default import main
-from DatamartDaywise1 import run_daywise_tool  
+from Datamart_Daywise_V3 import run_daywise_tool_ver3 
 
 
 # App title
@@ -27,4 +28,4 @@ elif page == "Staffing Req Analysis":
 
 elif page == "Datamart-Daywise":
     st.title("Datamart Daywise")
-    run_daywise_tool()
+    run_daywise_tool_ver3()
