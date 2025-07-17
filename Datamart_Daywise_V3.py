@@ -500,5 +500,5 @@ def run_daywise_tool_ver3():
             )
             st.success("File processed successfully!")  
 
-if __name__ == "__main__":
-    run_daywise_tool_ver3()
+# if __name__ == "__main__":
+#     run_daywise_tool_ver3()
